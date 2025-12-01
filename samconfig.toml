@@ -1,11 +1,13 @@
 version = 0.1
 
 [default.deploy.parameters]
-stack_name = "lambda-ping"
+stack_name = "tl-lambda-ping-sam"
 resolve_s3 = true
-s3_prefix = "lambda-ping"
-region = "ap-southeast-2"
+s3_prefix = "tl-lambda-ping-sam"
 confirm_changeset = true
 capabilities = "CAPABILITY_IAM"
 image_repositories = []
-disable_rollback = true
+disable_rollback = false
+
+[default.global.parameters]
+region = "eu-central-1"

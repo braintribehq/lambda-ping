@@ -12,6 +12,10 @@ Resources:
   PingFunction:
     Type: AWS::Serverless::Function
     Properties:
+      FunctionName: lambda-ping-http
+      Architectures:
+        - arm64
+      
       Handler: handler.http
       CodeUri: .
       Description: Perform an HTTP request to 'ping' a remote server to determine availability
@@ -26,4 +30,187 @@ Resources:
           Type: Schedule
           Properties:
             Schedule: rate(5 minutes)
-            Input: '["https://www.jethrocarr.com", "https://www.google.com"]'
+            Input: '["https://artifactory.braintribe.com", "https://ci.braintribe.com/login", "https://prod-platform-invoicing.t1-prod.tribefire-aws.cloud/services/home"]'
+
+  PingFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${PingFunction}
+      RetentionInDays: 7
+
+  # KMS key for encrypting the SNS topic
+  # 'arn:aws:iam::881128007784:role/aws-reserved/sso.amazonaws.com/eu-central-1/AWSReservedSSO_Tribe_Admins_014c8ab3fcc5cff8'
+  PingAlarmKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS key for encrypting lambda-ping-http SNS alerts
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          # Admin permissions for your deployment principal
+          - Sid: AllowKeyAdminPrincipal
+            Effect: Allow
+            Principal:
+              AWS: 'arn:aws:iam::881128007784:role/aws-reserved/sso.amazonaws.com/eu-central-1/AWSReservedSSO_Tribe_Admins_014c8ab3fcc5cff8'
+            Action: 'kms:*'
+            Resource: '*'
+
+          - Sid: AllowRootAccountAdmin
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action: 'kms:*'
+            Resource: '*'
+
+          # allow CloudWatch alarms to use this key for the encrypted SNS topic
+          - Sid: AllowCloudWatchAlarmsToUseKey
+            Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action:
+              - kms:Decrypt
+              - kms:Encrypt
+              - kms:ReEncrypt*
+              - kms:CreateGrant
+              - kms:GenerateDataKey*
+            Resource: "*"
+
+          # Allow SNS to use this key for this topic in this account
+          - Sid: AllowSNSToUseKeyForPingAlertsTopic
+            Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:CreateGrant
+              - kms:DescribeKey
+            Resource: '*'
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+
+  PingAlarmKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/lambda-ping-http-alerts
+      TargetKeyId: !Ref PingAlarmKey
+
+  # SNS topic + SMS subscription, encrypted with KMS
+  PingAlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: tl-lambda-ping-http-alerts
+      DisplayName: Lambda ping SMS alerts
+      KmsMasterKeyId: !Ref PingAlarmKey
+      Subscription:
+        - Protocol: sms
+          Endpoint: '+421908579071'  # E.164 format
+
+  # Alarm on StatusCode != 200 with OK notifications
+  PingStatusAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: tl-lambda-ping-http-artifactory-statuscode-not-200
+      AlarmDescription: Endpoint https://artifactory.braintribe.com is DOWN
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref PingAlarmTopic      # SMS on ALARM
+      OKActions:
+        - !Ref PingAlarmTopic      # SMS on recovery (OK)
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 2
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 0
+      TreatMissingData: breaching
+
+      Metrics:
+        - Id: m1
+          MetricStat:
+            Metric:
+              Namespace: 'Lambda-Ping/HTTP'
+              MetricName: StatusCode
+              Dimensions:
+                - Name: Endpoint
+                  Value: 'https://artifactory.braintribe.com'
+            Period: 300        # 5 minutes, matches rate(5 minutes)
+            Stat: Sum          # See the lambda handler, current value is passed as sum
+          ReturnData: false
+
+        - Id: e1
+          Expression: IF(m1 != 200, 1, 0)
+          Label: StatusCodeNot200
+          ReturnData: true
+
+  # Alarm on StatusCode != 200 with OK notifications
+  PingStatusAlarmCi:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: tl-lambda-ping-http-jenkins-statuscode-not-200
+      AlarmDescription: Endpoint https://ci.braintribe.com/login is DOWN
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref PingAlarmTopic      # SMS on ALARM
+      OKActions:
+        - !Ref PingAlarmTopic      # SMS on recovery (OK)
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 2
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 0
+      TreatMissingData: breaching
+
+      Metrics:
+        - Id: m1
+          MetricStat:
+            Metric:
+              Namespace: 'Lambda-Ping/HTTP'
+              MetricName: StatusCode
+              Dimensions:
+                - Name: Endpoint
+                  Value: 'https://ci.braintribe.com/login'
+            Period: 300        # 5 minutes, matches rate(5 minutes)
+            Stat: Sum          # See the lambda handler, current value is passed as sum
+          ReturnData: false
+
+        - Id: e1
+          Expression: IF(m1 != 200, 1, 0)
+          Label: StatusCodeNot200
+          ReturnData: true
+
+  # Alarm on StatusCode != 200 with OK notifications
+  PingStatusAlarmInvoicing:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: tl-lambda-ping-http-invoicing-statuscode-not-200
+      AlarmDescription: Endpoint https://prod-platform-invoicing.t1-prod.tribefire-aws.cloud/services/home is DOWN
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref PingAlarmTopic      # SMS on ALARM
+      OKActions:
+        - !Ref PingAlarmTopic      # SMS on recovery (OK)
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 2
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 0
+      TreatMissingData: breaching
+
+      Metrics:
+        - Id: m1
+          MetricStat:
+            Metric:
+              Namespace: 'Lambda-Ping/HTTP'
+              MetricName: StatusCode
+              Dimensions:
+                - Name: Endpoint
+                  Value: 'https://prod-platform-invoicing.t1-prod.tribefire-aws.cloud/services/home'
+            Period: 300        # 5 minutes, matches rate(5 minutes)
+            Stat: Sum          # See the lambda handler, current value is passed as sum
+          ReturnData: false
+
+        - Id: e1
+          Expression: IF(m1 != 200, 1, 0)
+          Label: StatusCodeNot200
+          ReturnData: true

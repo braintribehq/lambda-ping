@@ -20,7 +20,7 @@ exports.http = async (event, context, callback) => {
       durationMS = Date.now() - start;
     } catch (error) {
       httpError = error.code || error.message;
-      statusCode = 0;
+      statusCode = 999;
       durationMS = 0;
     }
     output[endpoint] = {
@@ -49,23 +49,7 @@ exports.http = async (event, context, callback) => {
             Maximum: 1000,
           },
           Unit: 'None',
-        },
-        {
-          MetricName: 'Latency',
-          Dimensions: [
-            {
-              Name: 'Endpoint',
-              Value: endpoint,
-            },
-          ],
-          StatisticValues: {
-            SampleCount: 1,
-            Sum: durationMS,
-            Minimum: 0,
-            Maximum: 30000,
-          },
-          Unit: 'Milliseconds',
-        },
+        }
       ],
     };
     try {
