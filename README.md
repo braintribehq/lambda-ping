@@ -1,3 +1,9 @@
+# Modifications
+
+* reduce metrics, don't emit latency
+* improve the template with KMS, SNS, Alarms, Encryption, ...
+* change error code to 999
+
 # Lambda Ping
 
 Lambda Ping is a small service which checks the HTTP response code and latency
