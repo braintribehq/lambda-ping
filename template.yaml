@@ -109,6 +109,8 @@ Resources:
       Subscription:
         - Protocol: sms
           Endpoint: '+421908579071'  # E.164 format
+        # - Protocol: sms
+        #   Endpoint: '+436602526546'
 
   # Alarm on StatusCode != 200 with OK notifications
   PingStatusAlarm:
